@@ -45,7 +45,11 @@ info: Scanning mainnet from block 13746549 (tip 13746827)
 info: Received 2039.57997308 GAS at Nec6R8h1VU1FSBYDcnKNDPm3AwUkaUjc6u from NY6HgPkxWPBEiKaC8HSo1PhjXATEiuAdEB in block 13746549 (tx 0x99a9a8bdfa53457dc2d0f71d3c296bb277fea5ac78fab8560783d03528b63597)
 ```
 
-When a transfer settles an invoice, the line ends with `, paid invoice inv_…`.
+End to end on testnet (3 Oct 2026): an order for 1 GAS got the unique amount `1.00002098`. The payment, sent from NeoLine, landed in block 19898561, and the signed `invoice.paid` webhook was delivered 2.7 seconds after the block ([transaction](https://dora.coz.io/transaction/neo3/testnet/0x84bea723bc3100affa007b8b6b58a5ace094f3585cc0a7e6b5e1f1056089f42c)):
+
+```
+info: Received 1.00002098 GAS at NQGp42c1jC2Uom7bpLRsMseSSNk2A6vx2x from NWf1NLqnUEe55eq4TW3V1DwUhhhzJfrDTe in block 19898561 (tx 0x84bea723bc3100affa007b8b6b58a5ace094f3585cc0a7e6b5e1f1056089f42c), paid invoice inv_08d735fe38e39f03
+```
 
 For mainnet set `"Network": "mainnet"`, mainnet `RpcUrls` (e.g. `https://mainnet1.neo.coz.io:443`, `http://seed1.neo.org:10332`) and a separate `DatabasePath`. At startup the watcher checks the node's network magic and refuses to mix networks in one database.
 
