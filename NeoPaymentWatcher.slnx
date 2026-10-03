@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NeoPaymentWatcher/NeoPaymentWatcher.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NeoPaymentWatcher.Tests/NeoPaymentWatcher.Tests.csproj" />
+  </Folder>
+</Solution>
