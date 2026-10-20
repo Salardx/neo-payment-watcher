@@ -109,6 +109,11 @@ Send the customer to `checkoutUrl`, or show them `amount` yourself (or a QR code
 
 Set `Checkout:PublicBaseUrl` to the origin customers reach the service on (behind TLS), and `Checkout:Title` to the shop's name.
 
+The testnet invoice of 20 Oct 2026, before and after the customer paid it from NeoLine (the wallet's confirmation is in [docs/checkout-neoline.png](docs/checkout-neoline.png)):
+
+![Checkout page waiting for payment](docs/checkout-pending.png)
+![Checkout page after the payment was seen](docs/checkout-paid.png)
+
 ## Webhooks
 
 `POST` to `Watcher:Webhook:Url` with:
