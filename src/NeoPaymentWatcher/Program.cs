@@ -14,6 +14,7 @@ builder.Services.AddSingleton<WatchList>();
 builder.Services.AddSingleton<TokenRegistry>();
 builder.Services.AddSingleton<ScannerState>();
 builder.Services.AddSingleton<InvoiceService>();
+builder.Services.AddSingleton<CheckoutService>();
 builder.Services.AddHostedService<BlockScanner>();
 builder.Services.AddHostedService<WebhookDispatcher>();
 
@@ -48,5 +49,12 @@ app.MapGet("/invoices/{id}", (string id, InvoiceService invoices) => invoices.Ge
     .AddEndpointFilter<ApiKeyFilter>();
 app.MapGet("/transfers", (int? limit, InvoiceService invoices) => invoices.RecentTransfers(limit ?? 50))
     .AddEndpointFilter<ApiKeyFilter>();
+
+// The customer-facing page needs no API key; the invoice id is the secret.
+if (settings.Checkout.Enabled)
+{
+    app.MapGet("/pay/{id}", (string id, HttpResponse response, CheckoutService checkout) => checkout.Page(id, response));
+    app.MapGet("/pay/{id}/status", (string id, HttpResponse response, CheckoutService checkout) => checkout.Status(id, response));
+}
 
 app.Run();

@@ -32,6 +32,8 @@ public sealed class WatcherOptions
 
     public InvoiceOptions Invoices { get; set; } = new();
 
+    public CheckoutOptions Checkout { get; set; } = new();
+
     public uint NetworkMagic => Network.ToLowerInvariant() switch
     {
         "mainnet" => 860833102u,
@@ -58,7 +60,35 @@ public sealed class WatcherOptions
         }
         if (PollIntervalMs <= 0 || Invoices.DefaultTtlMinutes <= 0 || Invoices.MaxOffsetUnits <= 0 || Invoices.ReuseCooldownMinutes < 0)
             throw new InvalidOperationException("Watcher:PollIntervalMs and Watcher:Invoices values must be positive.");
+        if (!Checkout.EncodesUri && !Checkout.QrContent.Equals("address", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Watcher:Checkout:QrContent must be 'address' or 'uri'.");
+        if (!string.IsNullOrWhiteSpace(Checkout.PublicBaseUrl)
+            && !(Uri.TryCreate(Checkout.PublicBaseUrl, UriKind.Absolute, out var baseUrl) && baseUrl.Scheme is "http" or "https"))
+            throw new InvalidOperationException("Watcher:Checkout:PublicBaseUrl must be an absolute http(s) URL, e.g. https://pay.example.com.");
     }
+}
+
+public sealed class CheckoutOptions
+{
+    /// <summary>Serves GET /pay/{id}, a payment page to link customers to. No API key: the invoice id, 64 random bits, is the secret.</summary>
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Public origin of this service, e.g. "https://pay.example.com". When set, invoices carry a checkoutUrl.</summary>
+    public string? PublicBaseUrl { get; set; }
+
+    /// <summary>Heading of the page, e.g. the shop's name.</summary>
+    public string Title { get; set; } = "Payment";
+
+    /// <summary>
+    /// What the QR code holds: "address", which every wallet can scan, or "uri", the NEP-9 payment link,
+    /// which prefills the amount in wallets that support it.
+    /// </summary>
+    public string QrContent { get; set; } = "address";
+
+    public bool EncodesUri => QrContent.Equals("uri", StringComparison.OrdinalIgnoreCase);
+
+    public string? UrlFor(string invoiceId) =>
+        Enabled && !string.IsNullOrWhiteSpace(PublicBaseUrl) ? $"{PublicBaseUrl.TrimEnd('/')}/pay/{invoiceId}" : null;
 }
 
 public sealed class WebhookOptions

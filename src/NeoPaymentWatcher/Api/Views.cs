@@ -43,9 +43,10 @@ public sealed record InvoiceView(
     DateTimeOffset ExpiresAt,
     string? PaidTxId,
     DateTimeOffset? PaidAt,
-    string PaymentUri)
+    string PaymentUri,
+    string? CheckoutUrl)
 {
-    public static InvoiceView Create(InvoiceRecord invoice, TokenInfo token)
+    public static InvoiceView Create(InvoiceRecord invoice, TokenInfo token, string? checkoutUrl = null)
     {
         var amount = TokenAmount.Format(invoice.UniqueUnits, token.Decimals);
         return new InvoiceView(
@@ -61,11 +62,12 @@ public sealed record InvoiceView(
             DateTimeOffset.FromUnixTimeMilliseconds(invoice.ExpiresAt),
             invoice.PaidTxId,
             invoice.PaidAt is { } paidAt ? DateTimeOffset.FromUnixTimeMilliseconds(paidAt) : null,
-            BuildPaymentUri(invoice.Address, token, amount));
+            BuildPaymentUri(invoice.Address, token, amount),
+            checkoutUrl);
     }
 
     /// <summary>NEP-9 payment URI, which wallets turn into a prefilled transfer (e.g. from a QR code).</summary>
-    static string BuildPaymentUri(string address, TokenInfo token, string amount)
+    internal static string BuildPaymentUri(string address, TokenInfo token, string amount)
     {
         var asset = token.Hash switch
         {
@@ -84,11 +86,11 @@ public static class WebhookPayloads
 {
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-    public static string Build(string network, TokenInfo token, Nep17Transfer transfer, InvoiceRecord? invoice) =>
+    public static string Build(string network, TokenInfo token, Nep17Transfer transfer, InvoiceRecord? invoice, CheckoutOptions? checkout = null) =>
         JsonSerializer.Serialize(new WebhookEvent(
             $"{transfer.TxId}:{transfer.NotifyIndex}",
             invoice is null ? "transfer.received" : "invoice.paid",
             network,
             TransferView.Create(transfer, token, invoice?.Id),
-            invoice is null ? null : InvoiceView.Create(invoice, token)), Json);
+            invoice is null ? null : InvoiceView.Create(invoice, token, checkout?.UrlFor(invoice.Id))), Json);
 }

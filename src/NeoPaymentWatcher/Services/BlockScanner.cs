@@ -70,7 +70,7 @@ public sealed class BlockScanner(
         var webhooks = !string.IsNullOrWhiteSpace(settings.Webhook.Url);
         var committed = store.CommitBlock(index, block.Time, transfers,
             (transfer, invoice) => webhooks
-                ? WebhookPayloads.Build(settings.Network, tokens.Get(transfer.TokenHash), transfer, invoice)
+                ? WebhookPayloads.Build(settings.Network, tokens.Get(transfer.TokenHash), transfer, invoice, settings.Checkout)
                 : null,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 

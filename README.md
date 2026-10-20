@@ -5,6 +5,7 @@ Watch-only payment detection for **Neo N3**. It follows the chain, detects incom
 - .NET 10, SQLite, plain JSON-RPC to any public Neo N3 node; one NuGet dependency (`Microsoft.Data.Sqlite`).
 - Runs anywhere .NET runs (tested on Windows Server 2025), no node or Docker required.
 - Exactly-once bookkeeping per block, signed webhooks with retries, invoice API with NEP-9 payment URIs.
+- A hosted checkout page per invoice (amount, QR code, live status), so a shop can take Neo payments with no frontend work.
 
 ## How it works
 
@@ -51,13 +52,19 @@ End to end on testnet (3 Oct 2026): an order for 1 GAS got the unique amount `1.
 info: Received 1.00002098 GAS at NQGp42c1jC2Uom7bpLRsMseSSNk2A6vx2x from NWf1NLqnUEe55eq4TW3V1DwUhhhzJfrDTe in block 19898561 (tx 0x84bea723bc3100affa007b8b6b58a5ace094f3585cc0a7e6b5e1f1056089f42c), paid invoice inv_08d735fe38e39f03
 ```
 
+The checkout page, end to end on testnet (20 Oct 2026): invoice `inv_eadcd65c6758d2bd` for 1.5 GAS got the unique amount `1.50001444`; the customer opened `/pay/inv_eadcd65c6758d2bd`, scanned the address and paid from NeoLine; the transfer landed in block 20343628 ([transaction](https://dora.coz.io/transaction/neo3/testnet/0x259a809cd59508997c1cce962805a07936f3c7a0284085e86977136d20ab1dfa)) and the page flipped to **Paid** on its next poll:
+
+```
+info: Received 1.50001444 GAS at NQGp42c1jC2Uom7bpLRsMseSSNk2A6vx2x from NWf1NLqnUEe55eq4TW3V1DwUhhhzJfrDTe in block 20343628 (tx 0x259a809cd59508997c1cce962805a07936f3c7a0284085e86977136d20ab1dfa), paid invoice inv_eadcd65c6758d2bd
+```
+
 For mainnet set `"Network": "mainnet"`, mainnet `RpcUrls` (e.g. `https://mainnet1.neo.coz.io:443`, `http://seed1.neo.org:10332`) and a separate `DatabasePath`. At startup the watcher checks the node's network magic and refuses to mix networks in one database.
 
 Every setting can also come from environment variables, e.g. `Watcher__Addresses__0=N...`.
 
 ## HTTP API
 
-Listens on `http://127.0.0.1:5080` by default. When `Watcher:ApiKey` is set, every endpoint except `/health` requires the `X-Api-Key` header.
+Listens on `http://127.0.0.1:5080` by default. When `Watcher:ApiKey` is set, every endpoint except `/health` and the checkout page requires the `X-Api-Key` header.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -65,6 +72,8 @@ Listens on `http://127.0.0.1:5080` by default. When `Watcher:ApiKey` is set, eve
 | `GET` | `/invoices/{id}` | Invoice status: `pending`, `paid` or `expired`. |
 | `GET` | `/transfers?limit=50` | Latest incoming transfers. |
 | `GET` | `/health` | Network, chain tip, last processed block. |
+| `GET` | `/pay/{id}` | The checkout page for an invoice (see below). No API key. |
+| `GET` | `/pay/{id}/status` | What the page polls: `status`, `paidTxId`, `paidAt`, `expiresAt`, `explorerUrl`. No API key. |
 
 Response from `POST /invoices`:
 
@@ -82,11 +91,23 @@ Response from `POST /invoices`:
   "expiresAt": "2026-10-03T15:20:23.026+00:00",
   "paidTxId": null,
   "paidAt": null,
-  "paymentUri": "neo:Nec6R8h1VU1FSBYDcnKNDPm3AwUkaUjc6u?asset=gas&amount=1.50007883"
+  "paymentUri": "neo:Nec6R8h1VU1FSBYDcnKNDPm3AwUkaUjc6u?asset=gas&amount=1.50007883",
+  "checkoutUrl": "https://pay.example.com/pay/inv_55a0b177a274926e"
 }
 ```
 
-Show the customer `amount` (or a QR code of `paymentUri`); they must send exactly that amount. NEO has no decimals, so it cannot be used for unique-amount invoices; its transfers are still reported.
+Send the customer to `checkoutUrl`, or show them `amount` yourself (or a QR code of `paymentUri`); they must send exactly that amount. `checkoutUrl` is `null` until `Checkout:PublicBaseUrl` is set. NEO has no decimals, so it cannot be used for unique-amount invoices; its transfers are still reported.
+
+## Checkout page
+
+`GET /pay/{id}` is a payment page the shop links its customer to:
+
+- The exact amount with a copy button, the receiving address with a copy button, and a QR code of the address (or of the NEP-9 link, with `Checkout:QrContent` set to `uri`, for wallets that prefill the amount from it).
+- A status line that counts down to expiry, then flips to **Paid** with a link to the transaction on [Dora](https://dora.coz.io) the moment the watcher sees the transfer. The page polls `/pay/{id}/status` every 3 seconds, one block; without JavaScript it reloads every 10 seconds instead.
+- One HTML document with no external resources: no fonts, scripts or images are fetched from anywhere, so nothing about the customer leaks to a third party, and it works behind any firewall. The QR code is generated in the service (byte mode, error correction level M) rather than by a graphics library.
+- Public on purpose, so that customers need no key: the invoice id (64 random bits) is the only secret, the page shows nothing but that invoice, and it is sent with `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and a Content-Security-Policy.
+
+Set `Checkout:PublicBaseUrl` to the origin customers reach the service on (behind TLS), and `Checkout:Title` to the shop's name.
 
 ## Webhooks
 
@@ -143,11 +164,15 @@ All settings live under `Watcher`.
 | `Invoices:DefaultTtlMinutes` | `30` | Invoice lifetime. |
 | `Invoices:MaxOffsetUnits` | `9999` | Largest unique-amount offset in base units, capped at 1% of one token. |
 | `Invoices:ReuseCooldownMinutes` | `60` | How long an expired invoice's amount stays reserved. |
+| `Checkout:Enabled` | `true` | Serve the checkout page at `/pay/{id}`. |
+| `Checkout:PublicBaseUrl` | empty | Public origin of the service, e.g. `https://pay.example.com`; gives invoices their `checkoutUrl`. |
+| `Checkout:Title` | `Payment` | Heading of the page, e.g. the shop's name. |
+| `Checkout:QrContent` | `address` | `address` (any wallet can scan it) or `uri` (the NEP-9 link; prefills the amount in wallets that support it). |
 
 ## Security notes
 
 - Watch-only: the service only needs public addresses. Keep your keys in your wallet.
-- The API binds to localhost by default. Set `ApiKey` and put TLS in front before exposing it.
+- The API binds to localhost by default. Set `ApiKey` and put TLS in front before exposing it. The checkout page is meant to be public; everything else stays behind the key.
 - Only whitelisted token contracts count as payment; verify contract hashes before adding tokens.
 - Treat a webhook as a trigger and confirm with `GET /invoices/{id}` if your receiver cannot verify signatures.
 
@@ -157,7 +182,7 @@ All settings live under `Watcher`.
 dotnet test
 ```
 
-The tests cover address encoding, amount maths, transfer parsing against real mainnet notifications (including NEP-11, mints, failed transactions and fake tokens), invoice matching, expiry, idempotent block commits and webhook retry scheduling.
+The tests cover address encoding, amount maths, transfer parsing against real mainnet notifications (including NEP-11, mints, failed transactions and fake tokens), invoice matching, expiry, idempotent block commits, webhook retry scheduling, the checkout page and the QR encoder (whose output was also decoded back with jsQR for every symbol version).
 
 ## License
 

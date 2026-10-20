@@ -31,7 +31,7 @@ public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, Wat
             var invoice = store.CreateInvoice(address, token.Hash, requested, maxOffset,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ttlMinutes * 60_000L, settings.ReuseCooldownMinutes * 60_000L,
                 request.Reference);
-            return Results.Created($"/invoices/{invoice.Id}", InvoiceView.Create(invoice, token));
+            return Results.Created($"/invoices/{invoice.Id}", InvoiceView.Create(invoice, token, options.Value.Checkout.UrlFor(invoice.Id)));
         }
         catch (InvalidOperationException ex)
         {
@@ -40,7 +40,7 @@ public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, Wat
     }
 
     public IResult Get(string id) => store.GetInvoice(id) is { } invoice
-        ? Results.Ok(InvoiceView.Create(invoice, tokens.Get(invoice.TokenHash)))
+        ? Results.Ok(InvoiceView.Create(invoice, tokens.Get(invoice.TokenHash), options.Value.Checkout.UrlFor(invoice.Id)))
         : Results.NotFound();
 
     public IResult RecentTransfers(int limit) => Results.Ok(store.GetRecentTransfers(Math.Clamp(limit, 1, 500))
