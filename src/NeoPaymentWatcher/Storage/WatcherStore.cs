@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Numerics;
 using System.Security.Cryptography;
 using Microsoft.Data.Sqlite;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Neo;
 
 namespace NeoPaymentWatcher.Storage;
@@ -19,9 +20,9 @@ public sealed record InvoiceRecord(
     string? PaidTxId,
     long? PaidAt);
 
-public sealed record CommittedTransfer(Nep17Transfer Transfer, InvoiceRecord? Invoice);
+public sealed record CommittedTransfer(TokenTransfer Transfer, InvoiceRecord? Invoice);
 
-public sealed record StoredTransfer(Nep17Transfer Transfer, string? InvoiceId);
+public sealed record StoredTransfer(TokenTransfer Transfer, string? InvoiceId);
 
 public sealed record OutboxItem(long Id, string EventId, string Payload, int Attempts);
 
@@ -40,8 +41,8 @@ public sealed class WatcherStore(string databasePath)
     readonly string path = databasePath;
     readonly string connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
 
-    /// <summary>Creates the schema and pins the database to one network, so mainnet and testnet data never mix.</summary>
-    public void Initialize(uint networkMagic)
+    /// <summary>Creates the schema and pins the database to one network (<see cref="Chains.ChainProfile.NetworkKey"/>), so two networks never mix.</summary>
+    public void Initialize(string networkKey)
     {
         using var c = Open();
         Execute(c, null, """
@@ -84,7 +85,7 @@ public sealed class WatcherStore(string databasePath)
             """);
 
         var stored = GetMeta(c, "network");
-        var expected = networkMagic.ToString(CultureInfo.InvariantCulture);
+        var expected = networkKey;
         if (stored is null)
             SetMeta(c, null, "network", expected);
         else if (stored != expected)
@@ -105,8 +106,8 @@ public sealed class WatcherStore(string databasePath)
     public List<CommittedTransfer> CommitBlock(
         uint blockIndex,
         long blockTime,
-        IReadOnlyList<Nep17Transfer> transfers,
-        Func<Nep17Transfer, InvoiceRecord?, string?> webhookPayload,
+        IReadOnlyList<TokenTransfer> transfers,
+        Func<TokenTransfer, InvoiceRecord?, string?> webhookPayload,
         long now)
     {
         using var c = Open();
@@ -148,17 +149,19 @@ public sealed class WatcherStore(string databasePath)
     }
 
     /// <summary>
-    /// Creates an invoice whose amount is the requested amount plus a random offset of 1..maxOffset base units,
+    /// Creates an invoice whose amount is the requested amount plus a random offset of 1..maxOffset steps
+    /// of <paramref name="offsetUnit"/> base units (one base unit unless the token has more than 8 decimals),
     /// unique among pending invoices and recently expired ones for the same address and token.
     /// </summary>
     public InvoiceRecord CreateInvoice(
-        string address, string tokenHash, BigInteger requested, int maxOffset, long now, long ttlMs, long reuseCooldownMs, string? reference)
+        string address, string tokenHash, BigInteger requested, int maxOffset, long now, long ttlMs, long reuseCooldownMs, string? reference,
+        BigInteger? offsetUnit = null)
     {
         using var c = Open();
         using var tx = c.BeginTransaction();
         for (var attempt = 0; attempt < 100; attempt++)
         {
-            var unique = requested + RandomNumberGenerator.GetInt32(1, maxOffset + 1);
+            var unique = requested + RandomNumberGenerator.GetInt32(1, maxOffset + 1) * (offsetUnit ?? BigInteger.One);
             using (var check = Command(c, tx, """
                 SELECT COUNT(*) FROM invoices
                 WHERE address = $address AND token_hash = $token AND unique_amount = $amount
@@ -202,7 +205,7 @@ public sealed class WatcherStore(string databasePath)
         while (reader.Read())
         {
             transfers.Add(new StoredTransfer(
-                new Nep17Transfer(reader.GetString(0), reader.GetInt32(1), (uint)reader.GetInt64(2), reader.GetInt64(3),
+                new TokenTransfer(reader.GetString(0), reader.GetInt32(1), (uint)reader.GetInt64(2), reader.GetInt64(3),
                     reader.GetString(4), reader.GetString(5), reader.GetString(6), ParseUnits(reader.GetString(7))),
                 reader.IsDBNull(8) ? null : reader.GetString(8)));
         }
@@ -239,7 +242,7 @@ public sealed class WatcherStore(string databasePath)
             ("$attempts", attempts), ("$next", nextAttemptAt), ("$error", error), ("$id", id));
     }
 
-    static InvoiceRecord? FindPayableInvoice(SqliteConnection c, SqliteTransaction tx, Nep17Transfer t)
+    static InvoiceRecord? FindPayableInvoice(SqliteConnection c, SqliteTransaction tx, TokenTransfer t)
     {
         using var cmd = Command(c, tx, $"""
             SELECT {InvoiceColumns} FROM invoices

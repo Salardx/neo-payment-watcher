@@ -1,6 +1,7 @@
-using Microsoft.Extensions.Options;
 using NeoPaymentWatcher;
 using NeoPaymentWatcher.Api;
+using NeoPaymentWatcher.Chains;
+using NeoPaymentWatcher.Chains.Evm;
 using NeoPaymentWatcher.Neo;
 using NeoPaymentWatcher.Services;
 using NeoPaymentWatcher.Storage;
@@ -8,8 +9,17 @@ using NeoPaymentWatcher.Storage;
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true);
 builder.Services.Configure<WatcherOptions>(builder.Configuration.GetSection(WatcherOptions.Section));
-builder.Services.AddSingleton<NeoRpcClient>();
-builder.Services.AddSingleton(sp => new WatcherStore(sp.GetRequiredService<IOptions<WatcherOptions>>().Value.DatabasePath));
+
+// Fail fast on bad configuration, before anything is wired up or scanned.
+var settings = builder.Configuration.GetSection(WatcherOptions.Section).Get<WatcherOptions>() ?? new WatcherOptions();
+settings.Validate();
+var chain = settings.ResolveChain();
+
+builder.Services.AddSingleton(chain);
+builder.Services.AddSingleton<IChainClient>(sp => chain.IsEvm
+    ? new EvmChainClient(chain, sp.GetRequiredService<ILogger<EvmChainClient>>())
+    : new NeoChainClient(chain, sp.GetRequiredService<ILogger<NeoChainClient>>()));
+builder.Services.AddSingleton(new WatcherStore(settings.DatabasePath));
 builder.Services.AddSingleton<WatchList>();
 builder.Services.AddSingleton<TokenRegistry>();
 builder.Services.AddSingleton<ScannerState>();
@@ -20,25 +30,21 @@ builder.Services.AddHostedService<WebhookDispatcher>();
 
 var app = builder.Build();
 
-// Fail fast on bad configuration, or on a node from the wrong network, before anything is scanned.
-var settings = app.Services.GetRequiredService<IOptions<WatcherOptions>>().Value;
-settings.Validate();
-var rpc = app.Services.GetRequiredService<NeoRpcClient>();
-var magic = await rpc.GetNetworkMagicAsync(app.Lifetime.ApplicationStopping);
-if (magic != settings.NetworkMagic)
-{
-    throw new InvalidOperationException(
-        $"The RPC node is on network {magic}, but Watcher:Network is '{settings.Network}' ({settings.NetworkMagic}).");
-}
-app.Services.GetRequiredService<WatcherStore>().Initialize(settings.NetworkMagic);
+// A node from the wrong network, or a database from another one, stops the start.
+var client = app.Services.GetRequiredService<IChainClient>();
+await client.VerifyNetworkAsync(app.Lifetime.ApplicationStopping);
+app.Services.GetRequiredService<WatcherStore>().Initialize(chain.NetworkKey);
 var tokens = app.Services.GetRequiredService<TokenRegistry>();
-await tokens.LoadAsync(rpc, settings.Tokens, app.Lifetime.ApplicationStopping);
-app.Logger.LogInformation("Watching {Addresses} on {Network} for {Tokens}",
-    string.Join(", ", settings.Addresses), settings.Network, string.Join(", ", tokens.All.Select(t => $"{t.Symbol} ({t.Hash})")));
+await tokens.LoadAsync(client, settings, app.Lifetime.ApplicationStopping);
+var watchList = app.Services.GetRequiredService<WatchList>();
+app.Logger.LogInformation("Watching {Addresses} on {Chain} for {Tokens}",
+    string.Join(", ", watchList.Addresses), chain.Label, string.Join(", ", tokens.All.Select(t => $"{t.Symbol} ({t.Hash})")));
 
 app.MapGet("/health", (ScannerState state) => Results.Ok(new
 {
-    network = settings.Network,
+    chain = chain.Kind,
+    network = chain.Network,
+    chainId = chain.ChainId,
     tip = state.Tip,
     lastBlock = state.LastBlock,
     lastBlockTime = state.LastBlockTime is { } time ? DateTimeOffset.FromUnixTimeMilliseconds(time) : (DateTimeOffset?)null,

@@ -1,5 +1,6 @@
 using System.Numerics;
 using System.Text.Json;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Neo;
 
 namespace NeoPaymentWatcher.Tests;

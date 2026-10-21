@@ -1,12 +1,13 @@
 using System.Security.Cryptography;
 using Microsoft.Extensions.Options;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Services;
 using NeoPaymentWatcher.Storage;
 
 namespace NeoPaymentWatcher.Api;
 
 /// <summary>Serves the checkout page and its status. Public endpoints: an invoice id, 64 random bits, is the only key.</summary>
-public sealed class CheckoutService(WatcherStore store, TokenRegistry tokens, IOptions<WatcherOptions> options)
+public sealed class CheckoutService(WatcherStore store, TokenRegistry tokens, ChainProfile chain, IOptions<WatcherOptions> options)
 {
     const string Html = "text/html; charset=utf-8";
 
@@ -23,7 +24,7 @@ public sealed class CheckoutService(WatcherStore store, TokenRegistry tokens, IO
         if (store.GetInvoice(id) is not { } invoice)
             return Results.Content(CheckoutPage.NotFound(settings.Checkout), Html, statusCode: StatusCodes.Status404NotFound);
 
-        var html = CheckoutPage.Render(invoice, tokens.Get(invoice.TokenHash), settings.Network, settings.Checkout, nonce,
+        var html = CheckoutPage.Render(invoice, tokens.Get(invoice.TokenHash), chain, settings.Checkout, nonce,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         return Results.Content(html, Html);
     }
@@ -32,7 +33,7 @@ public sealed class CheckoutService(WatcherStore store, TokenRegistry tokens, IO
     {
         response.Headers.CacheControl = "no-store";
         return store.GetInvoice(id) is { } invoice
-            ? Results.Ok(CheckoutPage.Status(invoice, options.Value.Network))
+            ? Results.Ok(CheckoutPage.Status(invoice, chain))
             : Results.NotFound();
     }
 }

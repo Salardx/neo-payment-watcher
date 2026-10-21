@@ -1,5 +1,6 @@
 using System.Numerics;
 using Microsoft.Data.Sqlite;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Neo;
 using NeoPaymentWatcher.Storage;
 
@@ -9,7 +10,7 @@ public sealed class WatcherStoreTests : IDisposable
 {
     const string Gas = "0xd2a4cff31913016155e38e474a2c06d08be276cf";
     const string Merchant = "NWf1NLqnUEe55eq4TW3V1DwUhhhzJfrDTe";
-    const uint Testnet = 894710606;
+    const string Testnet = "894710606";
     const long Now = 1_791_000_000_000;
     const long Minute = 60_000;
 
@@ -121,8 +122,22 @@ public sealed class WatcherStoreTests : IDisposable
     [Fact]
     public void Database_is_pinned_to_one_network()
     {
-        var mainnet = 860833102u;
-        Assert.Throws<InvalidOperationException>(() => store.Initialize(mainnet));
+        Assert.Throws<InvalidOperationException>(() => store.Initialize("860833102"));
+        Assert.Throws<InvalidOperationException>(() => store.Initialize("evm:47763"));
+    }
+
+    [Fact]
+    public void Offsets_for_an_18_decimal_coin_move_in_8_decimal_steps()
+    {
+        var oneGas = BigInteger.Pow(10, 18);
+        var unit = BigInteger.Pow(10, 10);
+        for (var i = 0; i < 20; i++)
+        {
+            var invoice = store.CreateInvoice(Merchant, "native", oneGas, 9999, Now, 30 * Minute, 60 * Minute, null, unit);
+            var offset = invoice.UniqueUnits - oneGas;
+            Assert.Equal(BigInteger.Zero, offset % unit);
+            Assert.InRange(offset / unit, 1, 9999);
+        }
     }
 
     [Fact]
@@ -140,7 +155,7 @@ public sealed class WatcherStoreTests : IDisposable
         Assert.Empty(store.GetDueWebhooks(long.MaxValue, 10));
     }
 
-    static Nep17Transfer Payment(BigInteger amount, long blockTime) =>
+    static TokenTransfer Payment(BigInteger amount, long blockTime) =>
         new("0x" + Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()) + "00000000000000000000000000000000",
             1, 100, blockTime, Gas, Customer, Merchant, amount);
 }

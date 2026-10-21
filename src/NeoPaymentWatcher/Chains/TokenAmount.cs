@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Numerics;
 
-namespace NeoPaymentWatcher.Neo;
+namespace NeoPaymentWatcher.Chains;
 
 /// <summary>Converts between decimal token amounts ("1.5") and integer base units without floating point.</summary>
 public static class TokenAmount

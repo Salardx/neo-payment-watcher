@@ -1,19 +1,10 @@
 using System.Globalization;
 using System.Numerics;
 using System.Text.Json;
+using NeoPaymentWatcher.Chains;
 
 namespace NeoPaymentWatcher.Neo;
 
-/// <summary>A NEP-17 transfer into a watched address, as recorded on chain.</summary>
-public sealed record Nep17Transfer(
-    string TxId,
-    int NotifyIndex,
-    uint BlockIndex,
-    long BlockTime,
-    string TokenHash,
-    string From,
-    string To,
-    BigInteger Amount);
 
 public static class TransferParser
 {
@@ -22,14 +13,14 @@ public static class TransferParser
     /// Application executions count. Mints and burns, self-transfers, zero amounts, NEP-11 transfers and
     /// tokens outside the whitelist are skipped: anyone can deploy a contract that emits "Transfer".
     /// </summary>
-    public static List<Nep17Transfer> ParseIncoming(
+    public static List<TokenTransfer> ParseIncoming(
         JsonElement applicationLog,
         uint blockIndex,
         long blockTime,
         IReadOnlySet<string> watchedScriptHashes,
         IReadOnlySet<string> tokenHashes)
     {
-        var transfers = new List<Nep17Transfer>();
+        var transfers = new List<TokenTransfer>();
         var txId = applicationLog.GetProperty("txid").GetString()!;
         var notifyIndex = -1;
         foreach (var execution in applicationLog.GetProperty("executions").EnumerateArray())
@@ -62,7 +53,7 @@ public static class TransferParser
                 if (amount.Sign <= 0)
                     continue;
 
-                transfers.Add(new Nep17Transfer(txId, notifyIndex, blockIndex, blockTime, contract,
+                transfers.Add(new TokenTransfer(txId, notifyIndex, blockIndex, blockTime, contract,
                     NeoAddress.FromScriptHash(Convert.FromHexString(from)),
                     NeoAddress.FromScriptHash(Convert.FromHexString(to)),
                     amount));

@@ -2,13 +2,13 @@ using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Options;
-using NeoPaymentWatcher.Neo;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Services;
 using NeoPaymentWatcher.Storage;
 
 namespace NeoPaymentWatcher.Api;
 
-public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, WatchList watchList, IOptions<WatcherOptions> options)
+public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, WatchList watchList, ChainProfile chain, IOptions<WatcherOptions> options)
 {
     public IResult Create(CreateInvoiceRequest request)
     {
@@ -16,12 +16,12 @@ public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, Wat
         var token = tokens.Resolve(request.Token);
         if (token is null)
             return BadRequest($"Unknown token '{request.Token}'. Accepted: {string.Join(", ", tokens.All.Select(t => t.Symbol))}.");
-        var address = string.IsNullOrWhiteSpace(request.Address) ? watchList.Addresses[0] : request.Address.Trim();
-        if (!watchList.Contains(address))
-            return BadRequest($"Address {address} is not in Watcher:Addresses.");
+        var address = string.IsNullOrWhiteSpace(request.Address) ? watchList.Addresses[0] : watchList.Canonical(request.Address);
+        if (address is null)
+            return BadRequest($"Address {request.Address} is not in Watcher:Addresses.");
         if (!TokenAmount.TryParse(request.Amount, token.Decimals, out var requested) || requested.Sign <= 0)
             return BadRequest($"Amount must be a positive decimal string with at most {token.Decimals} decimals, e.g. \"1.5\".");
-        var maxOffset = MaxOffset(token.Decimals, settings.MaxOffsetUnits);
+        var (maxOffset, offsetUnit) = OffsetRule(token.Decimals, settings.MaxOffsetUnits);
         if (maxOffset < 1)
             return BadRequest($"{token.Symbol} has {token.Decimals} decimals; unique-amount invoices need at least 2.");
 
@@ -30,8 +30,8 @@ public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, Wat
         {
             var invoice = store.CreateInvoice(address, token.Hash, requested, maxOffset,
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ttlMinutes * 60_000L, settings.ReuseCooldownMinutes * 60_000L,
-                request.Reference);
-            return Results.Created($"/invoices/{invoice.Id}", InvoiceView.Create(invoice, token, options.Value.Checkout.UrlFor(invoice.Id)));
+                request.Reference, offsetUnit);
+            return Results.Created($"/invoices/{invoice.Id}", InvoiceView.Create(invoice, token, chain, options.Value.Checkout.UrlFor(invoice.Id)));
         }
         catch (InvalidOperationException ex)
         {
@@ -40,15 +40,23 @@ public sealed class InvoiceService(WatcherStore store, TokenRegistry tokens, Wat
     }
 
     public IResult Get(string id) => store.GetInvoice(id) is { } invoice
-        ? Results.Ok(InvoiceView.Create(invoice, tokens.Get(invoice.TokenHash), options.Value.Checkout.UrlFor(invoice.Id)))
+        ? Results.Ok(InvoiceView.Create(invoice, tokens.Get(invoice.TokenHash), chain, options.Value.Checkout.UrlFor(invoice.Id)))
         : Results.NotFound();
 
     public IResult RecentTransfers(int limit) => Results.Ok(store.GetRecentTransfers(Math.Clamp(limit, 1, 500))
         .Select(s => TransferView.Create(s.Transfer, tokens.Get(s.Transfer.TokenHash), s.InvoiceId)));
 
-    /// <summary>Keeps the offset under 1% of one whole token, so a customer never noticeably overpays.</summary>
-    internal static int MaxOffset(int decimals, int configured) =>
-        (int)BigInteger.Min(configured, BigInteger.Pow(10, decimals) / 100);
+    /// <summary>
+    /// The offset stays under 1% of one token, so a customer never noticeably overpays. For tokens with
+    /// more than 8 decimals it moves in steps that keep the amount at 8 decimals ("1.00000123"), rather
+    /// than eighteen digits a wallet would truncate.
+    /// </summary>
+    internal static (int MaxOffset, BigInteger Unit) OffsetRule(int decimals, int configured)
+    {
+        var unit = BigInteger.Pow(10, Math.Max(0, decimals - 8));
+        var cap = BigInteger.Pow(10, decimals) / 100 / unit;
+        return ((int)BigInteger.Min(configured, cap), unit);
+    }
 
     static IResult BadRequest(string detail) => Results.Problem(detail, statusCode: StatusCodes.Status400BadRequest);
 }

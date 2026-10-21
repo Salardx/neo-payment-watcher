@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
-using NeoPaymentWatcher.Neo;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Storage;
 
 namespace NeoPaymentWatcher.Api;
@@ -19,18 +19,20 @@ public sealed record CheckoutStatus(
 /// </summary>
 public static class CheckoutPage
 {
-    public static string Render(InvoiceRecord invoice, TokenInfo token, string network, CheckoutOptions options, string nonce, long nowMs)
+    public static string Render(InvoiceRecord invoice, TokenInfo token, ChainProfile chain, CheckoutOptions options, string nonce, long nowMs)
     {
         var amount = TokenAmount.Format(invoice.UniqueUnits, token.Decimals);
         var requested = TokenAmount.Format(invoice.RequestedUnits, token.Decimals);
         var extra = TokenAmount.Format(invoice.UniqueUnits - invoice.RequestedUnits, token.Decimals);
-        var uri = InvoiceView.BuildPaymentUri(invoice.Address, token, amount);
+        var uri = PaymentUris.Build(chain, invoice.Address, token, invoice.UniqueUnits, amount);
         var qr = QrCode.Encode(options.EncodesUri ? uri : invoice.Address).ToSvg();
         var pending = invoice.Status == "pending";
 
         var status = invoice.Status switch
         {
-            "paid" => $"Paid ✓ <a href=\"{E(ExplorerUrl(network, invoice.PaidTxId))}\" rel=\"noopener\">tx {E(Shorten(invoice.PaidTxId!))}</a>"
+            "paid" => (chain.ExplorerUrl(invoice.PaidTxId) is { } explorer
+                          ? $"Paid ✓ <a href=\"{E(explorer)}\" rel=\"noopener\">tx {E(Shorten(invoice.PaidTxId!))}</a>"
+                          : $"Paid ✓ tx {E(Shorten(invoice.PaidTxId!))}")
                       + $" · {E(Time(invoice.PaidAt!.Value))}",
             "expired" => "This invoice has expired. Please start a new order.",
             _ when invoice.ExpiresAt > nowMs => $"Waiting for payment · expires in {E(Minutes(invoice.ExpiresAt - nowMs))}",
@@ -45,14 +47,14 @@ public static class CheckoutPage
             html.Append("<noscript><meta http-equiv=\"refresh\" content=\"10\"></noscript>\n");
         html.Append("<style>").Append(Css).Append("</style>\n</head>\n");
         html.Append($"<body data-status=\"{E(invoice.Status)}\" data-expires=\"{invoice.ExpiresAt.ToString(CultureInfo.InvariantCulture)}\">\n<main>\n");
-        html.Append($"<header><h1>{E(options.Title)}</h1><span class=\"net\">Neo N3 · {E(network)}</span></header>\n");
+        html.Append($"<header><h1>{E(options.Title)}</h1><span class=\"net\">{E(chain.DisplayName)} · {E(chain.NetworkLabel)}</span></header>\n");
         html.Append("<section>\n");
         html.Append($"<p class=\"label\" id=\"amount-label\">{(invoice.Status == "paid" ? "Received" : "Send exactly")}</p>\n");
         html.Append($"<p class=\"value\">{E(amount)} <small>{E(token.Symbol)}</small> <button type=\"button\" class=\"pay\" data-copy=\"{E(amount)}\">Copy</button></p>\n");
         html.Append($"<p class=\"hint pay\">Your order is {E(requested)} {E(token.Symbol)}; the extra {E(extra)} identifies it. Any other amount cannot be matched to this order.</p>\n");
         html.Append("</section>\n<section class=\"pay\">\n");
         html.Append($"<figure>{qr}</figure>\n");
-        html.Append("<p class=\"label\">To this Neo N3 address</p>\n");
+        html.Append($"<p class=\"label\">To this {E(chain.DisplayName)} address</p>\n");
         html.Append($"<p class=\"addr\"><code>{E(invoice.Address)}</code> <button type=\"button\" data-copy=\"{E(invoice.Address)}\">Copy</button></p>\n");
         html.Append("</section>\n");
         html.Append($"<p id=\"status\" class=\"status\">{status}</p>\n");
@@ -70,16 +72,13 @@ public static class CheckoutPage
         + $"<body data-status=\"expired\">\n<main>\n<header><h1>{E(options.Title)}</h1></header>\n"
         + "<p class=\"status\">No such invoice. Check the link, or ask the shop for a new one.</p>\n</main>\n</body>\n</html>\n";
 
-    public static CheckoutStatus Status(InvoiceRecord invoice, string network) => new(
+    public static CheckoutStatus Status(InvoiceRecord invoice, ChainProfile chain) => new(
         invoice.Id,
         invoice.Status,
         DateTimeOffset.FromUnixTimeMilliseconds(invoice.ExpiresAt),
         invoice.PaidTxId,
         invoice.PaidAt is { } paidAt ? DateTimeOffset.FromUnixTimeMilliseconds(paidAt) : null,
-        ExplorerUrl(network, invoice.PaidTxId));
-
-    public static string? ExplorerUrl(string network, string? txId) =>
-        txId is null ? null : $"https://dora.coz.io/transaction/neo3/{network.ToLowerInvariant()}/{txId}";
+        chain.ExplorerUrl(invoice.PaidTxId));
 
     static string Shorten(string txId) => txId.Length > 20 ? $"{txId[..10]}…{txId[^6..]}" : txId;
 

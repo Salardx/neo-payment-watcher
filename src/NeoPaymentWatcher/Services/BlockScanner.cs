@@ -1,16 +1,17 @@
 using Microsoft.Extensions.Options;
 using NeoPaymentWatcher.Api;
-using NeoPaymentWatcher.Neo;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Storage;
 
 namespace NeoPaymentWatcher.Services;
 
 /// <summary>
-/// Follows the chain block by block. Neo N3's dBFT consensus has one-block finality: a block the node
-/// returns is final, so there is no confirmation depth and no reorg handling.
+/// Follows the chain block by block, staying <see cref="ChainProfile.Confirmations"/> blocks behind the
+/// tip. On dBFT chains (Neo N3, Neo X) that is zero: a block the node returns is final, so there is no
+/// reorg handling. On chains that can reorganise, the depth makes a reorganised block vanishingly unlikely.
 /// </summary>
 public sealed class BlockScanner(
-    NeoRpcClient rpc,
+    IChainClient chain,
     WatcherStore store,
     TokenRegistry tokens,
     WatchList watchList,
@@ -21,20 +22,23 @@ public sealed class BlockScanner(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var settings = options.Value;
+        var confirmations = (uint)chain.Chain.Confirmations;
         var announced = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                var tip = await rpc.GetBlockCountAsync(stoppingToken) - 1;
+                var tip = await chain.GetTipAsync(stoppingToken);
                 state.Tip = tip;
-                var next = store.GetNextHeight() ?? settings.StartHeight ?? tip;
+                var safe = tip >= confirmations ? tip - confirmations : 0;
+                var next = store.GetNextHeight() ?? settings.StartHeight ?? safe;
                 if (!announced)
                 {
-                    logger.LogInformation("Scanning {Network} from block {Next} (tip {Tip})", settings.Network, next, tip);
+                    logger.LogInformation("Scanning {Chain} from block {Next} (tip {Tip}, {Confirmations} confirmations)",
+                        chain.Chain.Label, next, tip, confirmations);
                     announced = true;
                 }
-                for (; next <= tip && !stoppingToken.IsCancellationRequested; next++)
+                for (; next <= safe && !stoppingToken.IsCancellationRequested; next++)
                     await ProcessBlockAsync(next, settings, stoppingToken);
                 await Task.Delay(settings.PollIntervalMs, stoppingToken);
             }
@@ -59,18 +63,12 @@ public sealed class BlockScanner(
 
     async Task ProcessBlockAsync(uint index, WatcherOptions settings, CancellationToken ct)
     {
-        var block = await rpc.GetBlockAsync(index, ct);
-        var transfers = new List<Nep17Transfer>();
-        foreach (var txId in block.TxIds)
-        {
-            var log = await rpc.GetApplicationLogAsync(txId, ct);
-            transfers.AddRange(TransferParser.ParseIncoming(log, index, block.Time, watchList.ScriptHashes, tokens.Hashes));
-        }
+        var block = await chain.ScanBlockAsync(index, watchList.Keys, tokens.Hashes, ct);
 
         var webhooks = !string.IsNullOrWhiteSpace(settings.Webhook.Url);
-        var committed = store.CommitBlock(index, block.Time, transfers,
+        var committed = store.CommitBlock(index, block.Time, block.Transfers,
             (transfer, invoice) => webhooks
-                ? WebhookPayloads.Build(settings.Network, tokens.Get(transfer.TokenHash), transfer, invoice, settings.Checkout)
+                ? WebhookPayloads.Build(chain.Chain, tokens.Get(transfer.TokenHash), transfer, invoice, settings.Checkout)
                 : null,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 

@@ -1,6 +1,6 @@
 using System.Numerics;
 using NeoPaymentWatcher.Api;
-using NeoPaymentWatcher.Neo;
+using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Services;
 
 namespace NeoPaymentWatcher.Tests;
@@ -43,18 +43,9 @@ public class TokenAmountTests
     public void Formats_base_units(string units, int decimals, string expected) =>
         Assert.Equal(expected, TokenAmount.Format(BigInteger.Parse(units), decimals));
 
-    [Theory]
-    [InlineData(8, 9999)] // GAS: at most 0.00009999 extra
-    [InlineData(6, 9999)] // a 6-decimal stablecoin: at most 0.009999 extra
-    [InlineData(2, 1)]
-    [InlineData(1, 0)]
-    [InlineData(0, 0)] // NEO is indivisible, so no unique amounts
-    public void Caps_unique_offsets_at_one_percent_of_a_token(int decimals, int expected) =>
-        Assert.Equal(expected, InvoiceService.MaxOffset(decimals, 9999));
-
+    // RFC 4231 test case 2.
     [Fact]
     public void Signs_webhooks_with_hmac_sha256() =>
-        // RFC 4231 test case 2.
         Assert.Equal("sha256=5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
             WebhookDispatcher.Sign("Jefe", "what do ya want for nothing?"));
 
