@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Text;
 using System.Text.Json;
 using NeoPaymentWatcher.Api;
 using NeoPaymentWatcher.Chains;
@@ -91,7 +92,7 @@ public class ChainsTests
     [Fact]
     public void Evm_settings_validate_addresses_and_tokens()
     {
-        var valid = new WatcherOptions { Chain = "evm", Network = "neox-testnet", Addresses = ["0x1234567890ABCDEF1234567890abcdef12345678"], Tokens = ["native", Usdc] };
+        var valid = new WatcherOptions { Chain = "evm", Network = "neox-testnet", Addresses = ["0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"], Tokens = ["native", Usdc] };
         valid.Validate();
 
         Assert.Throws<InvalidOperationException>(new WatcherOptions { Chain = "evm", Network = "neox-testnet", Addresses = ["NQGp42c1jC2Uom7bpLRsMseSSNk2A6vx2x"] }.Validate);
@@ -122,7 +123,7 @@ public class ChainsTests
         Assert.Equal(47763, EvmHex.ToInt64("0xba93"));
         Assert.Equal("0x1e240", EvmHex.Quantity(123456));
 
-        Assert.True(EvmHex.TryNormalizeAddress(" 0x1234567890ABCDEF1234567890abcdef12345678 ", out var address));
+        Assert.True(EvmHex.TryNormalizeAddress(" 0x1234567890ABCDEF1234567890ABCDEF12345678 ", out var address));
         Assert.Equal(Merchant, address);
         Assert.False(EvmHex.TryNormalizeAddress("0x1234", out _));
         Assert.False(EvmHex.TryNormalizeAddress("NQGp42c1jC2Uom7bpLRsMseSSNk2A6vx2x", out _));
@@ -182,6 +183,47 @@ public class ChainsTests
         Assert.Equal(new NativeCandidate("0x1", Payer, Merchant, BigInteger.Parse("1000000000000000000")), candidate);
         Assert.Equal(new TokenTransfer("0x1", -1, 7, 5, "native", Payer, Merchant, BigInteger.Parse("1000000000000000000")),
             EvmTransfers.Native(candidate, 7, 5));
+    }
+
+    [Fact]
+    public void A_missing_or_foreign_receipt_postpones_the_block_instead_of_dropping_the_payment()
+    {
+        static JsonElement Json(string json) => JsonDocument.Parse(json).RootElement;
+        const string block = "0xb10c";
+
+        Assert.True(EvmTransfers.Succeeded(Json("""{ "status": "0x1", "blockHash": "0xB10C" }"""), "0x1", block));
+        Assert.False(EvmTransfers.Succeeded(Json("""{ "status": "0x0", "blockHash": "0xb10c" }"""), "0x1", block));
+        Assert.False(EvmTransfers.Succeeded(Json("""{ "blockNumber": "0x64" }"""), "0x1", block));
+        Assert.Throws<InvalidOperationException>(() => EvmTransfers.Succeeded(Json("null"), "0x1", block));
+        Assert.Throws<InvalidOperationException>(() => EvmTransfers.Succeeded(Json("""{ "status": "0x1", "blockHash": "0x0ther" }"""), "0x1", block));
+    }
+
+    [Theory]
+    [InlineData("", "c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")]
+    [InlineData("abc", "4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45")]
+    [InlineData("The quick brown fox jumps over the lazy dog", "4d741b6f1eb29cb2a9b9911c82f56fa8d73b04959d3d9d222895df6c0b28aa15")]
+    [InlineData("Transfer(address,address,uint256)", "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")]
+    public void Keccak256_matches_the_reference_vectors(string text, string digest) =>
+        Assert.Equal(digest, Convert.ToHexStringLower(Keccak.Hash256(Encoding.ASCII.GetBytes(text))));
+
+    // The first four are the test cases of EIP-55; the last is USDC on Base.
+    [Theory]
+    [InlineData("0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed")]
+    [InlineData("0xfB6916095ca1df60bB79Ce92cE3Ea74c37c5d359")]
+    [InlineData("0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB")]
+    [InlineData("0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb")]
+    [InlineData("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")]
+    public void Checksummed_addresses_are_accepted_and_one_wrong_letter_is_refused(string checksummed)
+    {
+        Assert.Equal(checksummed[2..], EvmHex.Checksum(checksummed[2..].ToLowerInvariant()));
+        Assert.True(EvmHex.TryNormalizeAddress(checksummed, out var normalized));
+        Assert.Equal(checksummed.ToLowerInvariant(), normalized);
+        Assert.True(EvmHex.TryNormalizeAddress(normalized, out _));
+        Assert.True(EvmHex.TryNormalizeAddress("0x" + checksummed[2..].ToUpperInvariant(), out _));
+
+        var i = checksummed.IndexOf(checksummed.Skip(2).First(char.IsLetter));
+        var flipped = char.IsUpper(checksummed[i]) ? char.ToLowerInvariant(checksummed[i]) : char.ToUpperInvariant(checksummed[i]);
+        Assert.False(EvmHex.TryNormalizeAddress(checksummed[..i] + flipped + checksummed[(i + 1)..], out _));
     }
 
     [Theory]

@@ -4,8 +4,8 @@ Watch-only payment detection for **Neo N3** and, over standard JSON-RPC, **Neo X
 
 - .NET 10, SQLite, plain JSON-RPC to any public node; one NuGet dependency (`Microsoft.Data.Sqlite`).
 - Runs anywhere .NET runs (tested on Windows Server 2025), no node or Docker required.
-- Exactly-once bookkeeping per block, signed webhooks with retries, invoice API with NEP-9 payment URIs.
-- A hosted checkout page per invoice (amount, QR code, live status), so a shop can take Neo payments with no frontend work.
+- Exactly-once bookkeeping per block, signed webhooks with retries, invoice API with NEP-9 (Neo N3) and EIP-681 (EVM) payment links.
+- A hosted checkout page per invoice (amount, QR code, live status), so a shop can take payments with no frontend work.
 
 ## How it works
 
@@ -68,7 +68,7 @@ info: Received 116.993864 GAS at 0xd2dd7b597fd2435b6db61ddf48544fd931e6869f from
 
 An invoice for 1.5 GAS on that chain got the unique amount `1.50009109` and the link `ethereum:0xd2dd7b597fd2435b6db61ddf48544fd931e6869f@47763?value=1500091090000000000`.
 
-For mainnet set `"Network": "mainnet"` and a separate `DatabasePath`. Each network has public nodes built in; `RpcUrls` overrides them. At startup the watcher checks the node's network and refuses to mix networks in one database.
+For Neo N3 mainnet set `"Network": "mainnet"` (`neox-mainnet` for Neo X) and a separate `DatabasePath`. Each network has public nodes built in; `RpcUrls` overrides them. At startup the watcher checks the node's network and refuses to mix networks in one database.
 
 Every setting can also come from environment variables, e.g. `Watcher__Addresses__0=N...`.
 
@@ -100,11 +100,12 @@ Add ERC-20 tokens by contract address in `Tokens`, e.g. USDC on Base (`0x833589f
 
 What to know on EVM chains:
 
-- **Only direct payments count.** A transfer of the chain's own coin made *by a contract* (an "internal transfer", e.g. from a smart-contract wallet) is not in the block's transaction list and is not detected; ERC-20 transfers are detected whoever sends them. Customers paying from a normal wallet are always seen.
+- **Only direct payments count for the chain's own coin.** GAS, OKB or ETH sent *by a contract* is an "internal transfer": it is not in the block's transaction list and is not detected. That includes smart-contract wallets (Coinbase Smart Wallet, Safe) and exchange withdrawals that go through a contract; payments from an ordinary wallet (an externally owned account) are seen. ERC-20 transfers are detected whoever sends them, so a shop that expects such customers should price in a stablecoin.
+- **Addresses.** A mixed-case address is checked against its EIP-55 checksum, so a mistyped address is refused at startup and in `POST /invoices`; an all-lowercase address is taken as it is. Addresses are stored and shown in lowercase.
 - **Confirmations.** `Confirmations` is how many blocks the watcher stays behind the tip. Neo X is dBFT and needs none. On Base and X Layer the sequencer practically never reorganises, so the defaults are small; raise them for large tickets.
 - **Amounts stay readable.** For 18-decimal coins the unique offset moves in 8-decimal steps, so a customer sees `1.50001234 GAS`, not eighteen digits.
 - **Payment links** in `paymentUri` follow [EIP-681](https://eips.ethereum.org/EIPS/eip-681) (`ethereum:<address>@<chainId>?value=...`, or `/transfer` for a token). Wallet support for prefilled amounts varies, so the checkout page's QR code holds the plain address unless `Checkout:QrContent` is `uri`.
-- **Calls per block:** one for the block, one for the logs when tokens are configured, and one receipt per candidate native payment. At one-second blocks that fits inside public rate limits, with one exception: Base's own node (`mainnet.base.org`) throttles `eth_getLogs`, so the preset tries a second public node first. For production, put your own or a keyed endpoint in `RpcUrls`.
+- **Calls per block:** one for the block, one for the logs when tokens are configured, and one receipt per candidate native payment. At one-second blocks that fits inside public rate limits, with one exception: Base's own node (`mainnet.base.org`) throttles `eth_getLogs`, so the preset tries a second public node first. For production, put your own or a keyed endpoint in `RpcUrls`; the log names only an endpoint's host, never its path or key. Logs are requested by block hash and a receipt must name the block being scanned, so a node that lags behind the one that served the block, or a reorganisation, causes an error and a rescan rather than a silently missing payment.
 
 ## HTTP API
 
@@ -146,8 +147,8 @@ Send the customer to `checkoutUrl`, or show them `amount` yourself (or a QR code
 
 `GET /pay/{id}` is a payment page the shop links its customer to:
 
-- The exact amount with a copy button, the receiving address with a copy button, and a QR code of the address (or of the NEP-9 link, with `Checkout:QrContent` set to `uri`, for wallets that prefill the amount from it).
-- A status line that counts down to expiry, then flips to **Paid** with a link to the transaction on [Dora](https://dora.coz.io) the moment the watcher sees the transfer. The page polls `/pay/{id}/status` every 3 seconds, one block; without JavaScript it reloads every 10 seconds instead.
+- The exact amount with a copy button, the receiving address with a copy button, and a QR code of the address (or of the NEP-9 / EIP-681 link, with `Checkout:QrContent` set to `uri`, for wallets that prefill the amount from it).
+- A status line that counts down to expiry, then flips to **Paid** with a link to the transaction on the chain's explorer (Dora, xexplorer, Basescan, OKLink) the moment the watcher sees the transfer. The page polls `/pay/{id}/status` every 3 seconds, one block; without JavaScript it reloads every 10 seconds instead.
 - One HTML document with no external resources: no fonts, scripts or images are fetched from anywhere, so nothing about the customer leaks to a third party, and it works behind any firewall. The QR code is generated in the service (byte mode, error correction level M) rather than by a graphics library.
 - Public on purpose, so that customers need no key: the invoice id (64 random bits) is the only secret, the page shows nothing but that invoice, and it is sent with `Cache-Control: no-store`, `Referrer-Policy: no-referrer` and a Content-Security-Policy.
 
@@ -162,7 +163,7 @@ The testnet invoice of 20 Oct 2026, before and after the customer paid it from N
 
 `POST` to `Watcher:Webhook:Url` with:
 
-- `X-Event-Id`: `<txid>:<notification index>`, unique per transfer. Delivery is at-least-once, so de-duplicate on it.
+- `X-Event-Id`: `<txid>:<notification index>` (`<txid>:-1` for a payment in an EVM chain's own coin), unique per transfer. Delivery is at-least-once, so de-duplicate on it.
 - `X-Signature`: `sha256=<hex HMAC-SHA256 of the raw body>`, when `Webhook:Secret` is set.
 
 `type` is `invoice.paid` when the transfer settled an invoice, else `transfer.received`. This payload was produced by replaying mainnet block 13746549:
@@ -211,7 +212,7 @@ All settings live under `Watcher`.
 | `Tokens` | NEO and GAS, or the native coin | Token contracts to accept: NEP-17 hashes on Neo N3, ERC-20 addresses on an EVM chain. Symbol and decimals are read from chain. |
 | `WatchNative` | `true` | EVM only: also accept the chain's own coin. |
 | `StartHeight` | chain tip | Block to start from on the first run; later runs resume from the database. |
-| `PollIntervalMs` | `1000` | Delay between polls once caught up (blocks are 3 s apart). |
+| `PollIntervalMs` | `1000` | Delay between polls once caught up (blocks are a few seconds apart on every supported chain). |
 | `DatabasePath` | `watcher-testnet.db` | SQLite file. Use one per network. |
 | `ApiKey` | empty | Required `X-Api-Key` value for the API when set. |
 | `Webhook:Url` / `Secret` / `MaxAttempts` | empty / empty / `12` | Event delivery. |
@@ -221,7 +222,7 @@ All settings live under `Watcher`.
 | `Checkout:Enabled` | `true` | Serve the checkout page at `/pay/{id}`. |
 | `Checkout:PublicBaseUrl` | empty | Public origin of the service, e.g. `https://pay.example.com`; gives invoices their `checkoutUrl`. |
 | `Checkout:Title` | `Payment` | Heading of the page, e.g. the shop's name. |
-| `Checkout:QrContent` | `address` | `address` (any wallet can scan it) or `uri` (the NEP-9 link; prefills the amount in wallets that support it). |
+| `Checkout:QrContent` | `address` | `address` (any wallet can scan it) or `uri` (the NEP-9 or EIP-681 link; prefills the amount in wallets that support it). |
 
 ## Security notes
 

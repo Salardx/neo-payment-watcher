@@ -71,6 +71,22 @@ public static class EvmTransfers
     public static TokenTransfer Native(NativeCandidate c, uint blockIndex, long blockTime) =>
         new(c.TxId, -1, blockIndex, blockTime, TokenRegistry.Native, c.From, c.To, c.Value);
 
+    /// <summary>
+    /// Whether a receipt says the transaction succeeded in the block being scanned. A missing receipt is
+    /// not a failure: the node has not indexed that block yet (behind a load balancer, the node answering
+    /// this call can lag behind the one that served the block). A receipt from another block means the
+    /// chain reorganised under the scan. Both throw, so the block is scanned again instead of being
+    /// committed without the payment.
+    /// </summary>
+    public static bool Succeeded(JsonElement receipt, string txId, string blockHash)
+    {
+        if (receipt.ValueKind != JsonValueKind.Object)
+            throw new InvalidOperationException($"The receipt of {txId} is not available from the node yet.");
+        if (Text(receipt, "blockHash") is { } inBlock && !inBlock.Equals(blockHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"The receipt of {txId} is in block {inBlock}, not {blockHash}: the chain reorganised or the node is inconsistent.");
+        return Text(receipt, "status") is { } status && EvmHex.ToBigInteger(status).IsOne;
+    }
+
     static string? Text(JsonElement e, string name) =>
         e.TryGetProperty(name, out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() : null;
 }

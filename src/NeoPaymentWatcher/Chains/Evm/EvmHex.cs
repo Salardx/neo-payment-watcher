@@ -19,7 +19,10 @@ public static class EvmHex
 
     public static long ToInt64(string? hex) => (long)ToBigInteger(hex);
 
-    /// <summary>"0x" and 40 hex digits, in any case, to lowercase. Checksums are not enforced: a wrong-case address still names the same account.</summary>
+    /// <summary>
+    /// "0x" and 40 hex digits, to lowercase. Mixed case is an EIP-55 checksum and is verified, so a
+    /// mistyped address is refused; all-lowercase and all-uppercase addresses carry no checksum.
+    /// </summary>
     public static bool TryNormalizeAddress(string? value, out string address)
     {
         address = "";
@@ -28,8 +31,26 @@ public static class EvmHex
         var text = value.Trim();
         if (text.Length != 42 || !text.StartsWith("0x", StringComparison.OrdinalIgnoreCase) || !text[2..].All(Uri.IsHexDigit))
             return false;
-        address = "0x" + text[2..].ToLowerInvariant();
+        var hex = text[2..];
+        var lower = hex.ToLowerInvariant();
+        if (hex.Any(char.IsLower) && hex.Any(char.IsUpper) && hex != Checksum(lower))
+            return false;
+        address = "0x" + lower;
         return true;
+    }
+
+    /// <summary>EIP-55: the nibbles of keccak256(lowercase hex address) decide which letters are upper case.</summary>
+    public static string Checksum(string lowerHex)
+    {
+        var digest = Keccak.Hash256(Encoding.ASCII.GetBytes(lowerHex));
+        var chars = lowerHex.ToCharArray();
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var nibble = i % 2 == 0 ? digest[i / 2] >> 4 : digest[i / 2] & 0xF;
+            if (nibble >= 8)
+                chars[i] = char.ToUpperInvariant(chars[i]);
+        }
+        return new string(chars);
     }
 
     /// <summary>An address as it appears in an indexed log topic: left-padded to 32 bytes.</summary>

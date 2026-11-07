@@ -54,9 +54,9 @@ public static class ChainPresets
         ["neox-testnet"] = new(ChainProfile.Evm, "Neo X", "testnet", 12227332, null, "GAS", 18,
             "https://xt4scan.ngd.network/tx/{tx}", 0, ["https://neoxt4seed1.ngd.network", "https://neoxt4seed2.ngd.network"]),
         ["xlayer-mainnet"] = new(ChainProfile.Evm, "X Layer", "mainnet", 196, null, "OKB", 18,
-            "https://www.oklink.com/xlayer/tx/{tx}", 2, ["https://rpc.xlayer.tech", "https://xlayerrpc.okx.com"]),
+            "https://www.oklink.com/x-layer/evm/tx/{tx}", 2, ["https://rpc.xlayer.tech", "https://xlayerrpc.okx.com"]),
         ["xlayer-testnet"] = new(ChainProfile.Evm, "X Layer", "testnet", 1952, null, "OKB", 18,
-            "https://www.oklink.com/xlayer-test/tx/{tx}", 2, ["https://testrpc.xlayer.tech", "https://xlayertestrpc.okx.com"]),
+            "https://www.oklink.com/x-layer-testnet/tx/{tx}", 2, ["https://testrpc.xlayer.tech", "https://xlayertestrpc.okx.com"]),
         // Base's own public node throttles eth_getLogs hard ("request limit reached"), so a second public node comes first.
         ["base-mainnet"] = new(ChainProfile.Evm, "Base", "mainnet", 8453, null, "ETH", 18,
             "https://basescan.org/tx/{tx}", 6, ["https://base-rpc.publicnode.com", "https://mainnet.base.org"]),

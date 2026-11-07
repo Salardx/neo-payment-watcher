@@ -1,5 +1,4 @@
 using System.Numerics;
-using NeoPaymentWatcher.Api;
 using NeoPaymentWatcher.Chains;
 using NeoPaymentWatcher.Services;
 

@@ -5,7 +5,6 @@ using NeoPaymentWatcher.Chains;
 
 namespace NeoPaymentWatcher.Neo;
 
-
 public static class TransferParser
 {
     /// <summary>

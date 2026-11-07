@@ -134,10 +134,14 @@ public static class CheckoutPage
             body.dataset.status = s.status;
             if (s.status === 'paid') {
               status.textContent = 'Paid ✓ ';
-              const a = document.createElement('a');
-              a.href = s.explorerUrl; a.rel = 'noopener';
-              a.textContent = 'tx ' + s.paidTxId.slice(0, 10) + '…' + s.paidTxId.slice(-6);
-              status.appendChild(a);
+              const short = 'tx ' + s.paidTxId.slice(0, 10) + '…' + s.paidTxId.slice(-6);
+              if (s.explorerUrl) {
+                const a = document.createElement('a');
+                a.href = s.explorerUrl; a.rel = 'noopener'; a.textContent = short;
+                status.appendChild(a);
+              } else {
+                status.appendChild(document.createTextNode(short));
+              }
               status.appendChild(document.createTextNode(' · ' + new Date(s.paidAt).toUTCString().replace(' GMT', ' UTC')));
               document.getElementById('amount-label').textContent = 'Received';
             } else if (s.status === 'expired') {

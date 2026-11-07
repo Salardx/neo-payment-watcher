@@ -33,6 +33,7 @@ public sealed class EvmChainClient(ChainProfile chain, ILogger<EvmChainClient> l
         var block = await rpc.CallAsync("eth_getBlockByNumber", [number, true], ct);
         if (block.ValueKind != JsonValueKind.Object)
             throw new InvalidOperationException($"Block {index} is not available from the node yet.");
+        var hash = block.GetProperty("hash").GetString()!;
         var time = EvmHex.ToInt64(block.GetProperty("timestamp").GetString()) * 1000;
 
         var transfers = new List<TokenTransfer>();
@@ -41,7 +42,7 @@ public sealed class EvmChainClient(ChainProfile chain, ILogger<EvmChainClient> l
             foreach (var candidate in EvmTransfers.NativeCandidates(transactions, watchedKeys))
             {
                 var receipt = await rpc.CallAsync("eth_getTransactionReceipt", [candidate.TxId], ct);
-                if (receipt.ValueKind == JsonValueKind.Object && receipt.TryGetProperty("status", out var status) && status.GetString() == "0x1")
+                if (EvmTransfers.Succeeded(receipt, candidate.TxId, hash))
                     transfers.Add(EvmTransfers.Native(candidate, index, time));
             }
         }
@@ -49,10 +50,11 @@ public sealed class EvmChainClient(ChainProfile chain, ILogger<EvmChainClient> l
         var tokens = tokenHashes.Where(t => t != TokenRegistry.Native).ToArray();
         if (tokens.Length > 0 && watchedKeys.Count > 0)
         {
+            // By hash, not by number: a node that does not have the block yet then answers with an error,
+            // and the block is scanned again, instead of the empty list that would hide a payment.
             var filter = new
             {
-                fromBlock = number,
-                toBlock = number,
+                blockHash = hash,
                 address = tokens,
                 topics = new object?[] { EvmTransfers.TransferTopic, null, watchedKeys.Select(EvmHex.AddressTopic).ToArray() },
             };

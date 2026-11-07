@@ -3,10 +3,7 @@ using System.Text.Json;
 namespace NeoPaymentWatcher.Chains;
 
 public sealed class JsonRpcException(string method, int code, string? message)
-    : Exception($"RPC {method} failed with code {code}: {message}")
-{
-    public int Code { get; } = code;
-}
+    : Exception($"RPC {method} failed with code {code}: {message}");
 
 /// <summary>Plain JSON-RPC 2.0 over HTTP. A failed call is retried on the next configured endpoint, and the one that worked is preferred afterwards.</summary>
 public sealed class JsonRpcClient(string[] urls, ILogger logger)
@@ -33,11 +30,14 @@ public sealed class JsonRpcClient(string[] urls, ILogger logger)
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 lastError = ex;
-                logger.LogWarning("RPC {Method} on {Url} failed: {Error}", method, urls[index], ex.Message);
+                logger.LogWarning("RPC {Method} on {Host} failed: {Error}", method, Host(urls[index]), ex.Message);
             }
         }
         throw new InvalidOperationException($"All RPC endpoints failed for {method}.", lastError);
     }
+
+    /// <summary>Only the host goes into the log: a keyed endpoint carries its key in the path or query.</summary>
+    static string Host(string url) => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : url;
 
     async Task<JsonElement> CallOnceAsync(string url, string method, object?[] parameters, CancellationToken ct)
     {
